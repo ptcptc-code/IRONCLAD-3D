@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#07111f" />
+    <title>IRONCLAD · 3D 机库与机甲战斗模拟器</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="scene.css" />
+    <script src="scene.bundle.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <div id="scene-host"></div>
+    <div class="scene-vignette" aria-hidden="true"></div>
+    <div id="scene-loading" class="scene-message" role="status">
+      <div class="loading-ring"></div><small>IRONCLAD / REALTIME ENGINE</small>
+      <h2>正在准备机库</h2><p>构建机甲、材质与灯光，请稍候…</p>
+    </div>
+    <div id="scene-error" class="scene-message" role="alert" hidden>
+      <h2>无法启动 3D 场景</h2>
+      <p>请使用支持 WebGL 2 的 Chrome 或 Edge，并在浏览器设置中启用硬件加速后重新打开。</p>
+      <button class="scene-control" onclick="location.reload()">重新加载</button>
+    </div>
+    <div class="app-shell">
+      <div class="ambient ambient-one"></div>
+      <div class="ambient ambient-two"></div>
+
+      <header class="topbar">
+        <a class="brand" href="#build" aria-label="IRONCLAD LAB 首页">
+          <span class="brand-mark"><span></span><span></span><span></span></span>
+          <span>
+            <strong>IRONCLAD</strong>
+            <small>HANGAR 09 / MECH DIVISION</small>
+          </span>
+        </a>
+        <nav class="main-nav" aria-label="主导航">
+          <button class="nav-link is-active" data-scroll="build">机体设计</button>
+          <button class="nav-link" data-scroll="arena">战斗模拟</button>
+        </nav>
+        <div class="topbar-tools">
+          <span class="connection"><i></i> REALTIME 3D</span>
+          <label class="quality-picker">画质 <select id="quality-select" aria-label="渲染画质"><option value="cinematic">电影级</option><option value="balanced">均衡</option><option value="performance">流畅</option></select></label>
+          <button class="icon-button" id="reset-build" aria-label="重置机甲" title="重置机甲">↺</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="builder-panel panel-card" id="build">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">模块库 <span>//</span> CUSTOMIZE</p>
+              <h1>机体整备 <em>WORKSHOP</em></h1>
+            </div>
+            <span class="version-chip">3.1</span>
+          </div>
+          <p class="panel-intro">选择整机方案，或自由组合 36 款部件。背包与底盘也能独立混搭。</p>
+
+          <div class="preset-block">
+            <div class="selector-head"><span>整机设计方案</span><span class="selector-count">自由混搭</span></div>
+            <div id="preset-row" class="preset-row" role="group" aria-label="整机预设"></div>
+          </div>
+
+          <div class="part-tabs" id="part-tabs" role="tablist" aria-label="机甲部件分类"></div>
+
+          <div class="selector-block">
+            <div class="selector-head">
+              <span id="selection-label">躯干装甲</span>
+              <span class="selector-count" id="selection-count">01 / 03</span>
+            </div>
+            <div class="option-grid" id="option-grid" role="tabpanel" aria-labelledby="tab-chassis"></div>
+            <p class="library-summary" id="library-summary">36 款部件 · 46,656 种组合</p>
+          </div>
+
+          <div class="palette-block">
+            <div class="selector-head">
+              <span>机体涂装</span>
+              <span class="selector-count" id="palette-name">ION CYAN</span>
+            </div>
+            <div class="palette-row" id="palette-row"></div>
+          </div>
+
+          <div class="component-color-panel" id="component-color-panel">
+            <div class="selector-head">
+              <span>部件配色</span>
+              <span class="selector-count"><b id="component-color-name">躯干</b> / <span id="component-color-code">CORE</span></span>
+            </div>
+            <div class="color-input-grid">
+              <label class="color-input-card">
+                <span>主装甲</span>
+                <input id="component-base-color" type="color" value="#25505a" aria-label="当前部件主装甲色" />
+              </label>
+              <label class="color-input-card">
+                <span>副装甲</span>
+                <input id="component-secondary-color" type="color" value="#9bb9b5" aria-label="当前部件副装甲色" />
+              </label>
+              <label class="color-input-card">
+                <span>能量饰色</span>
+                <input id="component-accent-color" type="color" value="#62e8fb" aria-label="当前部件能量饰色" />
+              </label>
+            </div>
+            <div class="component-color-swatches" id="component-color-swatches" aria-label="部件快捷配色"></div>
+            <button class="apply-colors-button" id="apply-colors-all" type="button">将当前组合应用到全部部件</button>
+          </div>
+
+          <div class="build-note">
+            <span class="note-icon">✦</span>
+            <span>提示：高机动部件会提升速度，但会降低装甲稳定性。</span>
+          </div>
+          <button class="export-button" id="export-mech">↓ 导出当前机甲 · GLB</button>
+        </section>
+
+        <section class="preview-column">
+          <div class="preview-toolbar">
+            <div class="toolbar-status"><span class="pulse-dot"></span> 工作台在线 <span class="slash">/</span> 机体预览</div>
+            <div class="toolbar-actions">
+              <span class="tiny-label">UNIT ID</span>
+              <strong id="unit-id">AX-041</strong>
+            </div>
+          </div>
+
+          <div class="preview-stage panel-card">
+            <div class="stage-grid"></div>
+            <div class="serial-label">SERIAL 04<span>1</span> / PROTOTYPE</div>
+            <div class="stage-topline">
+              <div>
+                <p class="eyebrow">BAY 09 / ASSEMBLY DECK</p>
+                <h2 id="mech-name">AXIOM // 041</h2>
+              </div>
+              <div class="power-readout"><span>POWER</span><strong id="power-readout">84%</strong></div>
+            </div>
+            <div class="mech-art" id="mech-art" aria-label="当前机甲预览"></div>
+            <div class="stage-corner corner-tl"></div>
+            <div class="stage-corner corner-br"></div>
+            <div class="stage-footer">
+              <div class="footer-coordinate"><span>ORBIT CAMERA</span><strong>拖动旋转 · 滚轮缩放 · 右键平移</strong></div>
+              <div class="footer-chip" id="stage-status">ASSEMBLY READY</div>
+            </div>
+          </div>
+          <div class="scene-tools" role="toolbar" aria-label="3D 镜头控制">
+            <button class="scene-control" id="reset-camera" title="恢复机体全景 · R">机体全景</button>
+            <button class="scene-control" id="detail-camera">部件特写</button>
+            <button class="scene-control" id="scene-camera">机库全景</button>
+            <button class="scene-control" id="auto-rotate" aria-pressed="false">自动环绕</button>
+          </div>
+
+          <div class="telemetry-grid">
+            <div class="telemetry-card">
+              <span class="telemetry-icon">◈</span>
+              <div><small>CORE TEMP</small><strong id="core-temp">38.4°</strong></div>
+              <span class="telemetry-state stable">STABLE</span>
+            </div>
+            <div class="telemetry-card">
+              <span class="telemetry-icon">⌁</span>
+              <div><small>SYNC RATE</small><strong id="sync-rate">92.7%</strong></div>
+              <span class="telemetry-state">NOMINAL</span>
+            </div>
+            <div class="telemetry-card telemetry-card-wide">
+              <span class="telemetry-icon">◌</span>
+              <div><small>LOADOUT PROFILE</small><strong id="loadout-profile">BALANCED / MK-II</strong></div>
+              <span class="profile-bars"><i></i><i></i><i></i><i></i><i></i></span>
+            </div>
+          </div>
+        </section>
+
+        <aside class="arena-panel panel-card" id="arena">
+          <div class="arena-heading">
+            <div>
+              <p class="eyebrow">试炼场 <span>//</span> BATTLE SIM</p>
+              <h2>实战演算</h2>
+            </div>
+            <span class="round-badge" id="round-badge">ROUND 00</span>
+          </div>
+
+          <div class="matchup-card">
+            <div class="matchup-label"><span>SIMULATION MATCH</span><i></i></div>
+            <div class="fighter-row">
+              <div class="fighter fighter-player">
+                <span class="fighter-kicker">YOUR UNIT</span>
+                <strong id="player-name">AXIOM 041</strong>
+                <div class="health-line"><span>HP</span><div class="health-track"><i id="player-hp-bar"></i></div><b id="player-hp">100</b></div>
+              </div>
+              <div class="versus">VS</div>
+              <div class="fighter fighter-enemy">
+                <span class="fighter-kicker">OPPONENT</span>
+                <strong>NULLWALKER</strong>
+                <div class="health-line"><span>HP</span><div class="health-track"><i id="enemy-hp-bar"></i></div><b id="enemy-hp">100</b></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="mission-card">
+            <div class="mission-icon">◒</div>
+            <div><span class="fighter-kicker">CURRENT SCENARIO</span><strong>机库试炼 · SECTOR 09</strong><p>对抗 NULLWALKER，检验你的配置。</p></div>
+          </div>
+
+          <div class="stats-block">
+            <div class="stats-head"><span>战斗参数</span><span class="selector-count">LIVE CALCULATION</span></div>
+            <div class="stat-row"><span>火力输出</span><div class="stat-track"><i id="power-stat"></i></div><b id="power-stat-value">78</b></div>
+            <div class="stat-row"><span>装甲强度</span><div class="stat-track"><i id="armor-stat"></i></div><b id="armor-stat-value">71</b></div>
+            <div class="stat-row"><span>机动性能</span><div class="stat-track"><i id="speed-stat"></i></div><b id="speed-stat-value">83</b></div>
+            <div class="stat-row"><span>系统同步</span><div class="stat-track"><i id="sync-stat"></i></div><b id="sync-stat-value">92</b></div>
+          </div>
+
+          <button class="battle-button" id="start-battle"><span class="button-icon">⚡</span><span id="battle-button-label">启动战斗模拟</span><span class="button-arrow">↗</span></button>
+
+          <div class="battle-log">
+            <div class="log-head"><span>战斗记录</span><span id="log-state">STANDBY</span></div>
+            <div class="log-list" id="log-list" role="log" aria-live="polite" aria-relevant="additions">
+              <div class="log-entry muted"><span>--:--</span><p>等待驾驶员确认出击。</p></div>
+            </div>
+          </div>
+        </aside>
+      </main>
+
+      <footer class="footer-bar">
+        <span><b id="fps-readout">-- FPS</b> <span id="render-mode">PBR / AO / BLOOM</span></span>
+        <span id="scene-notice" role="status">本地 3D 渲染 · 无需联网</span>
+        <span class="photo-tools"><button id="take-photo" class="scene-control">保存场景截图</button><button id="photo-mode" class="scene-control" aria-pressed="false">沉浸模式 · H</button></span>
+      </footer>
+    </div>
+  </body>
+</html>
