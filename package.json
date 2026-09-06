@@ -1,0 +1,11 @@
+{
+  "name": "ironclad-hangar",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Offline 3D mech hangar and battle simulator",
+  "scripts": {
+    "build": "node scripts/build.mjs"
+  },
+  "dependencies": { "three": "0.180.0" },
+  "devDependencies": { "esbuild": "0.25.9", "playwright": "1.55.0" }
+}
