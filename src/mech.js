@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { box, plate, fin, cylinder, ring, bolt, cable, label, barBetween, bake, forkMaterials } from './assets.js';
 import { makeAdvancedTorso, makeAdvancedHead, makeAdvancedArm, makeAdvancedLegs, makeAdvancedWeapon, makeBackpack } from './variants.js';
 import { makeStandardTorso, makeStandardHead, makeStandardArm, makeStandardLegs, makeStandardWeapon } from './designs.js';
+import { createLibraryPart, libraryReady } from './library.js';
 
 function vents(parent, center, count, width, material) {
   for (let index = 0; index < count; index += 1) {
@@ -233,6 +234,7 @@ function makeWeapon(kind, materials) {
 }
 
 export function createMech(parts, materials, componentColors = {}) {
+  if (libraryReady()) return createLibraryMech(parts, materials, componentColors);
   const root = new THREE.Group();
   root.name = 'IRONCLAD_' + parts.chassis;
   const colors = componentColors;
@@ -258,6 +260,42 @@ export function createMech(parts, materials, componentColors = {}) {
   root.position.y = 0.23;
   const bounds = new THREE.Box3().setFromObject(root);
   return { root, torso, head, legs, arms, backpack, bounds, upperOffset, weapon: weapon.group, muzzle: weapon.muzzle, rotor: weapon.rotor, weaponRestZ: weapon.group.position.z, scopedMaterials };
+}
+
+function createLibraryMech(parts, materials, componentColors = {}) {
+  const root = new THREE.Group();
+  root.name = 'IRONCLAD_' + parts.chassis;
+  const colors = componentColors;
+  const scopedMaterials = {
+    chassis: forkMaterials(materials, colors.chassis),
+    head: forkMaterials(materials, colors.head),
+    arms: forkMaterials(materials, colors.arms),
+    legs: forkMaterials(materials, colors.legs),
+    weapon: forkMaterials(materials, colors.weapon),
+    backpack: forkMaterials(materials, colors.backpack)
+  };
+  const torso = createLibraryPart('chassis', parts.chassis, scopedMaterials.chassis);
+  const head = createLibraryPart('head', parts.head, scopedMaterials.head);
+  const legRoot = createLibraryPart('legs', parts.legs, scopedMaterials.legs);
+  const armRoot = createLibraryPart('arms', parts.arms, scopedMaterials.arms);
+  const weapon = createLibraryPart('weapon', parts.weapon, scopedMaterials.weapon);
+  const backpack = createLibraryPart('backpack', parts.backpack || 'compact', scopedMaterials.backpack);
+  const upperOffset = legRoot.userData.upperOffset ?? 0;
+  const arms = armRoot.children.filter(child => child.userData.armSide).sort((left, right) => left.userData.armSide - right.userData.armSide);
+  let muzzle;
+  let rotor;
+  weapon.traverse(object => {
+    if (object.userData.socket === 'muzzle') muzzle = object;
+    if (object.userData.socket === 'rotor') rotor = object;
+  });
+  if (!muzzle) throw new Error('Weapon asset is missing a muzzle socket: ' + parts.weapon);
+  [torso, head, armRoot, weapon, backpack].forEach(object => { object.position.y += upperOffset; });
+  root.add(torso, head, legRoot, armRoot, weapon, backpack);
+  root.userData.configuration = { ...parts, backpack: parts.backpack || 'compact', colors, assetSource: 'IRONCLAD-PARTS.glb' };
+  root.position.y = 0.23;
+  root.updateMatrixWorld(true);
+  const bounds = new THREE.Box3().setFromObject(root);
+  return { root, torso, head, legs: [legRoot], arms, backpack, bounds, upperOffset, weapon, muzzle, rotor, weaponRestZ: weapon.position.z, scopedMaterials };
 }
 
 

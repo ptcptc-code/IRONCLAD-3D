@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
+const assetBase64 = (await readFile(path.join(root, 'assets/IRONCLAD-PARTS.glb'))).toString('base64');
 await build({
   absWorkingDir: root,
   entryPoints: ['src/scene.js'],
@@ -14,9 +15,11 @@ await build({
   outfile: 'scene.bundle.js',
   logLevel: 'info'
 });
-const [html, baseStyles, sceneStyles, sceneScript, application] = await Promise.all(
+const [html, baseStyles, sceneStyles, bundledScene, application] = await Promise.all(
   ['index.html', 'styles.css', 'scene.css', 'scene.bundle.js', 'app.js'].map(filename => readFile(path.join(root, filename), 'utf8'))
 );
+const sceneScript = bundledScene.replaceAll('__IRONCLAD_PARTS_BASE64__', assetBase64);
+await writeFile(path.join(root, 'scene.bundle.js'), sceneScript);
 const safeScript = source => source.replace(/<\/script/gi, '<\\/script');
 const standalone = html
   .replace('<link rel="stylesheet" href="styles.css" />', () => '<style>' + baseStyles + '</style>')
@@ -26,4 +29,3 @@ const standalone = html
   .replace('</body>', () => '<script>' + safeScript(sceneScript) + '</script><script>' + safeScript(application) + '</script></body>');
 await writeFile(path.join(root, 'IRONCLAD-3D.html'), standalone);
 console.log('Standalone offline page: IRONCLAD-3D.html');
-

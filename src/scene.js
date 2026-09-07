@@ -13,6 +13,7 @@ import { makeMaterials, disposeModel, vector, ring } from './assets.js';
 import { createMech } from './mech.js';
 import { partDefinitions, defaultParts, buildPresets, chassisNames } from './catalog.js';
 import { createHangar, createDust, createLightShafts } from './hangar.js';
+import { loadPartLibrary } from './library.js';
 
 const host = document.getElementById('scene-host');
 const loading = document.getElementById('scene-loading');
@@ -211,7 +212,8 @@ function initialize() {
     const start = attacker.muzzle.getWorldPosition(new THREE.Vector3());
     const end = defender.root.localToWorld(new THREE.Vector3(0, 4.05 + defender.upperOffset, 0.35));
     const melee = ['monoblade', 'beamblade'].includes(weapon);
-    const color = weapon === 'gatling' || weapon === 'missiles' ? new THREE.Color('#ffc677') : side === 'player' ? materials.cyan.color.clone() : new THREE.Color('#ff553b');
+    const accent = attacker.scopedMaterials?.weapon?.cyan?.color || materials.cyan.color;
+    const color = weapon === 'gatling' || weapon === 'missiles' ? new THREE.Color('#ffc677') : side === 'player' ? accent.clone() : new THREE.Color('#ff553b');
     const curve = weapon === 'arc'
       ? new THREE.CatmullRomCurve3([start, start.clone().lerp(end, 0.32).add(new THREE.Vector3(0.1, 0.37, 0.1)), start.clone().lerp(end, 0.64).add(new THREE.Vector3(-0.14, -0.16, 0)), end])
       : weapon === 'missiles' || melee
@@ -411,18 +413,32 @@ function initialize() {
       document.getElementById('stage-status').textContent = result;
     },
     diagnostics() {
-      return { quality, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, parts: { ...currentParts }, upperOffset: currentMech.upperOffset, size: currentMech.bounds.getSize(new THREE.Vector3()).toArray(), effects: effects.length, camera: camera.position.toArray(), webgl: renderer.getContext().getParameter(renderer.getContext().VERSION) };
+      let meshCount = 0;
+      currentMech.root.traverse(object => { if (object.isMesh) meshCount += 1; });
+      return { quality, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, meshes: meshCount, assetSource: currentMech.root.userData.configuration?.assetSource || 'procedural fallback', parts: { ...currentParts }, upperOffset: currentMech.upperOffset, size: currentMech.bounds.getSize(new THREE.Vector3()).toArray(), effects: effects.length, camera: camera.position.toArray(), webgl: renderer.getContext().getParameter(renderer.getContext().VERSION) };
     }
   };
 }
 
 window.mechCatalog = { partDefinitions, defaultParts, buildPresets, chassisNames };
 
-try {
-  window.mechScene = initialize();
-} catch (error) {
+const pendingCalls = [];
+window.mechScene = {
+  available: false,
+  update(...args) { pendingCalls.push(['update', args]); },
+  focusPart(...args) { pendingCalls.push(['focusPart', args]); },
+  setBattle(...args) { pendingCalls.push(['setBattle', args]); },
+  strike(...args) { pendingCalls.push(['strike', args]); },
+  endBattle(...args) { pendingCalls.push(['endBattle', args]); }
+};
+
+loadPartLibrary().then(() => {
+  const sceneApi = initialize();
+  window.mechScene = sceneApi;
+  pendingCalls.forEach(([method, args]) => sceneApi[method]?.(...args));
+}).catch(error => {
   console.error('3D initialization failed', error);
   loading.hidden = true;
   errorPanel.hidden = false;
-  window.mechScene = { available: false, update() {}, focusPart() {}, setBattle() {}, strike() {}, endBattle() {} };
-}
+  errorPanel.querySelector('p').textContent = '3D asset library failed to load: ' + error.message;
+});

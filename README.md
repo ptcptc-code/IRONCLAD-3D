@@ -5,8 +5,8 @@
 ## 操作
 
 - 拖动空白场景旋转镜头，滚轮或双指缩放，右键拖动平移。
-- 左侧选择躯干、头部、手臂、腿部和武器，每类 3 种独立 3D 造型。
-- 涂装、外形和性能参数实时更新，配置自动保存在当前浏览器。
+- 左侧选择躯干、头部、臂甲、腿部、主武器和背包，共 6 类 × 6 款独立 3D 部件。
+- 涂装面板可分别编辑当前部件的主甲、副甲和发光三层颜色；配置自动保存在当前浏览器。
 - “部件特写”跟随当前选中的部件类别；“机体全景”或 R 键恢复镜头。
 - “机库全景”查看环境；“自动环绕”绕机甲旋转。
 - “沉浸模式”或 H 键隐藏界面，Escape 返回；“保存场景截图”导出纯场景 PNG。
@@ -23,8 +23,13 @@
 - scene.bundle.js：包含 Three.js 的本地渲染程序，已构建，可直接运行。
 - src/assets.js：程序化 PBR 表面、几何与绘制辅助。
 - src/mech.js：分层装甲、关节、背包和各类可替换机甲模块。
+- src/library.js：加载并按部件槽位替换 Blender MCP 生成的 36 款 GLB 网格资产。
+- scripts/model-parts.py：通过 Blender MCP 批量生成、整理并导出部件库。
 - src/hangar.js：检修平台、工业机库、管线、机械臂、标识及光束。
 - src/scene.js：环境光照、阴影、环境遮蔽、辉光、镜头及战斗特效。
+- assets/IRONCLAD-PARTS.glb：36 款可独立替换的部件库，网页构建时会嵌入单文件版本。
+- assets/IRONCLAD-PARTS.blend：对应的 Blender 可编辑源文件。
+- assets/MIVO-TORSO-HEAD-REF.png、MIVO-ARMS-LEGS-REF.png、MIVO-WEAPON-BACKPACK-REF.png：Mivo 生成的造型参考图。
 - assets/IRONCLAD-MECH.glb：默认机甲模型，包含材质与贴图。
 - assets/IRONCLAD-HANGAR.glb：机库与默认机甲的完整场景模型，包含材质与贴图。
 
@@ -46,3 +51,10 @@ npm run build
 ```
 
 更改 src 下的文件后重新构建；直接使用不需要安装 Node.js。Three.js 与构建依赖已锁定版本。
+
+重新生成部件库时，先启动 Blender MCP，再执行：
+
+python scripts/blender-mcp-call.py scripts/model-parts.py all
+npm run build
+
+模型脚本会把每个部件标记为 slot、option 和 materialChannel，网页运行时据此定位网格并将主甲、副甲、发光材质绑定到当前部件的独立调色数据。Mivo 参考图用于设计方向，不是对概念图进行一比一自动重建。

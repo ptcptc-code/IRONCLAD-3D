@@ -1,2 +1,5 @@
 node_modules/
 tmp/
+.tools/
+*.blend1
+__pycache__/
