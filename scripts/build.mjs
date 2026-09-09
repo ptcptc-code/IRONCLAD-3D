@@ -5,6 +5,13 @@ import path from 'node:path';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const assetBase64 = (await readFile(path.join(root, 'assets/IRONCLAD-PARTS.glb'))).toString('base64');
+let locomotionBase64 = '';
+try {
+  locomotionBase64 = (await readFile(path.join(root, 'assets/IRONCLAD-LOCOMOTION.glb'))).toString('base64');
+} catch (error) {
+  if (error.code !== 'ENOENT') throw error;
+  console.info('Optional locomotion asset absent; embedding original leg fallback.');
+}
 await build({
   absWorkingDir: root,
   entryPoints: ['src/scene.js'],
@@ -18,7 +25,9 @@ await build({
 const [html, baseStyles, sceneStyles, bundledScene, application] = await Promise.all(
   ['index.html', 'styles.css', 'scene.css', 'scene.bundle.js', 'app.js'].map(filename => readFile(path.join(root, filename), 'utf8'))
 );
-const sceneScript = bundledScene.replaceAll('__IRONCLAD_PARTS_BASE64__', assetBase64);
+const sceneScript = bundledScene
+  .replaceAll('__IRONCLAD_PARTS_BASE64__', assetBase64)
+  .replaceAll('__IRONCLAD_LOCOMOTION_BASE64__', locomotionBase64);
 await writeFile(path.join(root, 'scene.bundle.js'), sceneScript);
 const safeScript = source => source.replace(/<\/script/gi, '<\\/script');
 const standalone = html

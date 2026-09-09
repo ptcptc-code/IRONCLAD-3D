@@ -233,6 +233,19 @@ function makeWeapon(kind, materials) {
   return { group, muzzle };
 }
 
+function finishMech({ root, poseRoot, torso, head, legs, arms, backpack, upperOffset, weapon, muzzle, rotor, scopedMaterials }) {
+  root.updateMatrixWorld(true);
+  const bounds = new THREE.Box3().setFromObject(root);
+  const modelMinY = bounds.min.y - root.position.y;
+  const armRest = arms.map(arm => ({ position: arm.position.clone(), quaternion: arm.quaternion.clone(), rotation: arm.rotation.clone() }));
+  const rightArm = arms[1] || arms[0];
+  // Object3D.attach preserves the authored world transform, including the muzzle.
+  if (rightArm && weapon.parent !== rightArm) rightArm.attach(weapon);
+  root.updateMatrixWorld(true);
+  const weaponRestZ = weapon.position.z;
+  return { root, poseRoot, torso, head, legs, arms, armLeft: arms[0], armRight: arms[1], armRest, backpack, bounds, upperOffset, modelMinY, groundOffset: -modelMinY, weapon, muzzle, rotor, weaponRestZ, scopedMaterials };
+}
+
 export function createMech(parts, materials, componentColors = {}) {
   if (libraryReady()) return createLibraryMech(parts, materials, componentColors);
   const root = new THREE.Group();
@@ -255,11 +268,13 @@ export function createMech(parts, materials, componentColors = {}) {
   const weapon = makeWeapon(parts.weapon, scopedMaterials.weapon);
   const backpack = makeBackpack(parts.backpack || 'compact', scopedMaterials.backpack);
   [torso, head, ...arms, weapon.group, backpack].forEach(object => { object.position.y += upperOffset; });
-  root.add(torso, head, ...legs, ...arms, weapon.group, backpack);
+  const poseRoot = new THREE.Group();
+  poseRoot.name = 'PoseRoot';
+  poseRoot.add(torso, head, ...legs, ...arms, weapon.group, backpack);
+  root.add(poseRoot);
   root.userData.configuration = { ...parts, backpack: parts.backpack || 'compact', colors };
   root.position.y = 0.23;
-  const bounds = new THREE.Box3().setFromObject(root);
-  return { root, torso, head, legs, arms, backpack, bounds, upperOffset, weapon: weapon.group, muzzle: weapon.muzzle, rotor: weapon.rotor, weaponRestZ: weapon.group.position.z, scopedMaterials };
+  return finishMech({ root, poseRoot, torso, head, legs, arms, backpack, upperOffset, weapon: weapon.group, muzzle: weapon.muzzle, rotor: weapon.rotor, scopedMaterials });
 }
 
 function createLibraryMech(parts, materials, componentColors = {}) {
@@ -290,12 +305,13 @@ function createLibraryMech(parts, materials, componentColors = {}) {
   });
   if (!muzzle) throw new Error('Weapon asset is missing a muzzle socket: ' + parts.weapon);
   [torso, head, armRoot, weapon, backpack].forEach(object => { object.position.y += upperOffset; });
-  root.add(torso, head, legRoot, armRoot, weapon, backpack);
+  const poseRoot = new THREE.Group();
+  poseRoot.name = 'PoseRoot';
+  poseRoot.add(torso, head, legRoot, armRoot, weapon, backpack);
+  root.add(poseRoot);
   root.userData.configuration = { ...parts, backpack: parts.backpack || 'compact', colors, assetSource: 'IRONCLAD-PARTS.glb' };
   root.position.y = 0.23;
-  root.updateMatrixWorld(true);
-  const bounds = new THREE.Box3().setFromObject(root);
-  return { root, torso, head, legs: [legRoot], arms, backpack, bounds, upperOffset, weapon, muzzle, rotor, weaponRestZ: weapon.position.z, scopedMaterials };
+  return finishMech({ root, poseRoot, torso, head, legs: [legRoot], arms, backpack, upperOffset, weapon, muzzle, rotor, scopedMaterials });
 }
 
 

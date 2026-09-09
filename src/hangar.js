@@ -1,5 +1,90 @@
 import * as THREE from 'three';
 import { box, plate, cylinder, ring, cable, label, barBetween, bake, seededRandom } from './assets.js';
+import { createArena } from './arena.js';
+
+const PAD_RADIUS = 3;
+const RAMP_RADIUS = 5.3;
+const PAD_HEIGHT = 0.30;
+const GROUND_HEIGHT = -0.07;
+
+function groundHeight(x, z) {
+  const t = THREE.MathUtils.clamp((Math.hypot(x, z) - PAD_RADIUS) / (RAMP_RADIUS - PAD_RADIUS), 0, 1);
+  return THREE.MathUtils.lerp(PAD_HEIGHT, GROUND_HEIGHT, t * t * (3 - 2 * t));
+}
+
+function scopedLamp(material, name) {
+  const copy = material.clone();
+  copy.name = name;
+  copy.userData.disposeOnModel = true;
+  return copy;
+}
+
+function staticRegion(parent, name) {
+  const region = new THREE.Group();
+  region.name = name;
+  parent.add(region);
+  return region;
+}
+
+function finishRegion(region) {
+  const owned = new Set();
+  region.traverse(object => {
+    if (object.isMesh && object.userData.ownedGeometry && !object.material.transparent) owned.add(object.geometry);
+  });
+  bake(region);
+  owned.forEach(geometry => geometry.dispose());
+  region.traverse(object => {
+    if (object.isMesh) {
+      object.geometry.computeBoundingBox();
+      object.geometry.computeBoundingSphere();
+    }
+  });
+  return region;
+}
+
+function createPadRamp(parent, materials) {
+  // A real smooth annular apron: the entire departure lane, not a hidden step.
+  const segments = 128;
+  const rows = 32;
+  const positions = [];
+  const uvs = [];
+  const indices = [];
+  for (let row = 0; row <= rows; row += 1) {
+    const radius = THREE.MathUtils.lerp(PAD_RADIUS, RAMP_RADIUS, row / rows);
+    for (let segment = 0; segment <= segments; segment += 1) {
+      const angle = segment / segments * Math.PI * 2;
+      const x = Math.sin(angle) * radius;
+      const z = Math.cos(angle) * radius;
+      positions.push(x, groundHeight(x, z), z);
+      uvs.push(x / 4, z / 4);
+      if (row < rows && segment < segments) {
+        const a = row * (segments + 1) + segment;
+        const b = a + segments + 1;
+        indices.push(a, b, a + 1, a + 1, b, b + 1);
+      }
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  const ramp = new THREE.Mesh(geometry, materials.floor);
+  ramp.name = 'Pad_Smooth_Departure_Ramp';
+  ramp.castShadow = true;
+  ramp.receiveShadow = true;
+  ramp.userData.ownedGeometry = true;
+  parent.add(ramp);
+  // Dashed caution shoulders follow exactly the same height profile.
+  for (const side of [-1, 1]) {
+    for (let index = 0; index < 12; index += 1) {
+      const x = side * 2.9;
+      const z = -1.4 - index * 0.34;
+      const slope = (groundHeight(x, z + 0.03) - groundHeight(x, z - 0.03)) / 0.06;
+      box(parent, [0.2, 0.012, 0.22], [x, groundHeight(x, z) + 0.01, z], index % 3 ? materials.caution : materials.ivory, 0, [-Math.atan(slope), 0, 0]);
+    }
+  }
+}
 
 function crate(parent, materials, position, scale = 1) {
   const group = new THREE.Group();
@@ -38,12 +123,102 @@ function repairArm(parent, materials, side) {
   box(group, [0.15, 0.36, 0.3], [side * -1.41, 3.84, 0.43], materials.steel);
   cylinder(group, 0.11, 0.1, [side * -1.42, 3.84, 0.63], materials.cyan, [Math.PI / 2, 0, 0]);
   label(group, side < 0 ? 'ARM / L' : 'ARM / R', 0.52, [0, 1.02, 0.405], '#151a1d');
+  group.name = side < 0 ? 'Repair_Arm_L' : 'Repair_Arm_R';
   parent.add(group);
+  finishRegion(group);
+  return group;
+}
+
+function addHangarDetail(group, corridor, materials) {
+  const walls = staticRegion(group, 'Bay_Wall_Panels_Static');
+  const trusses = staticRegion(group, 'Ceiling_Trusses_Static');
+  const floor = staticRegion(group, 'Floor_Seams_Decals_Static');
+  const rails = staticRegion(group, 'Door_Rails_Detail_Static');
+  for (const side of [-1, 1]) {
+    for (let depth = -17; depth <= 13; depth += 5) {
+      box(walls, [0.16, 9.2, 3.7], [side * 10.43, 5.5, depth], materials.steel, 0.03);
+      box(walls, [0.08, 7.9, 3.15], [side * 10.52, 5.5, depth], materials.wall, 0.02);
+      for (let y = 2.1; y < 9; y += 1.7) box(walls, [0.05, 0.06, 3.05], [side * 10.58, y, depth], materials.caution, 0);
+    }
+    for (let depth = -18; depth <= 12; depth += 6) {
+      barBetween(trusses, [side * 9.7, 10.65, depth], [side * 3.9, 10.65, depth], 0.1, materials.steel);
+      barBetween(trusses, [side * 9.4, 10.65, depth], [side * 7.6, 9.75, depth], 0.07, materials.dark);
+      barBetween(trusses, [side * 7.6, 9.75, depth], [side * 5.8, 10.65, depth], 0.07, materials.dark);
+    }
+    box(floor, [0.035, 0.018, 25], [side * 4.8, -0.01, -1], materials.cyan, 0);
+    for (let depth = -7; depth <= 7; depth += 2) box(floor, [3.5, 0.018, 0.035], [side * 7.6, 0.005, depth], materials.steel, 0);
+  }
+  for (const z of [-13.95, -13.55]) {
+    box(rails, [20.4, 0.11, 0.12], [0, 9.22, z], materials.steel, 0);
+    box(rails, [20.0, 0.035, 0.06], [0, 9.29, z], materials.cyan, 0);
+  }
+  for (const z of [-10, -6, -2, 2, 6]) {
+    box(corridor, [0.22, 0.035, 1.4], [-4.95, 0.025, z], materials.amber, 0);
+    box(corridor, [0.22, 0.035, 1.4], [4.95, 0.025, z], materials.amber, 0);
+  }
+  finishRegion(walls); finishRegion(trusses); finishRegion(floor); finishRegion(rails); finishRegion(corridor);
+}
+
+function createDoors(parent, frame, materials) {
+  const leaves = [];
+  const indicator = scopedLamp(materials.cyan, 'Door_Status_Independent');
+  const warning = scopedLamp(materials.amber, 'Door_Warning_Independent');
+  for (const side of [-1, 1]) {
+    box(frame, [0.4, 8.6, 0.9], [side * 5, 4.2, -14.7], materials.steel);
+    box(frame, [0.12, 8.3, 0.08], [side * 4.88, 4.15, -14.20], indicator, 0);
+    box(frame, [0.7, 0.22, 0.7], [side * 5.4, 8.75, -14.1], materials.dark);
+    cylinder(frame, 0.14, 0.26, [side * 5.4, 8.98, -14.1], warning, [0, 0, 0], 12);
+    const leaf = staticRegion(parent, side < 0 ? 'Sliding_Door_L' : 'Sliding_Door_R');
+    leaf.position.set(side * 2.475, 0, -13.76);
+    box(leaf, [4.95, 8.56, 0.56], [0, 4.21, 0], materials.dark, 0.05);
+    for (const face of [-1, 1]) {
+      plate(leaf, [4.48, 7.82, 0.08], [0, 4.22, face * 0.315], materials.floor, 0.25);
+      for (let index = 0; index < 5; index += 1) {
+        box(leaf, [4.3, 0.12, 0.09], [0, 0.85 + index * 1.58, face * 0.39], materials.steel);
+      }
+      box(leaf, [0.07, 7.85, 0.04], [-side * 2.36, 4.22, face * 0.4], indicator, 0);
+      box(leaf, [0.18, 7.9, 0.08], [side * 2.25, 4.22, face * 0.39], materials.caution);
+      box(leaf, [2.6, 0.42, 0.09], [0, 1.38, face * 0.4], materials.caution);
+      for (let index = 0; index < 5; index += 1) {
+        box(leaf, [0.12, 0.38, 0.025], [-1 + index * 0.5, 1.38, face * 0.46], materials.dark, 0, [0, 0, -0.45]);
+      }
+    }
+    for (const x of [-1.65, 1.65]) {
+      box(leaf, [0.16, 0.3, 0.2], [x, 8.54, 0], materials.steel);
+      cylinder(leaf, 0.13, 0.18, [x, 8.72, 0], materials.dark, [Math.PI / 2, 0, 0], 12);
+    }
+    leaves.push(finishRegion(leaf));
+  }
+  box(frame, [21.4, 0.36, 0.82], [0, 8.97, -13.8], materials.dark);
+  box(frame, [21.1, 0.1, 0.12], [0, 8.78, -13.8], materials.steel);
+  box(frame, [21, 0.04, 0.22], [0, -0.09, -13.76], materials.steel, 0);
+  let openAmount = 0;
+  function setOpenAmount(amount) {
+    openAmount = THREE.MathUtils.clamp(Number.isFinite(amount) ? amount : 0, 0, 1);
+    leaves.forEach((leaf, index) => {
+      leaf.position.x = (index ? 1 : -1) * (2.475 + openAmount * 5.1);
+    });
+    const moving = openAmount > 0.001 && openAmount < 0.999;
+    warning.emissiveIntensity = moving ? 3.8 : 0.45;
+    indicator.emissiveIntensity = openAmount > 0.98 ? 2.3 : 0.9;
+  }
+  setOpenAmount(0);
+  return { setOpenAmount, get openAmount() { return openAmount; }, clearance: { halfWidth: 4.8, height: 8.5, z: -14.7 } };
 }
 
 export function createHangar(materials) {
-  const group = new THREE.Group();
-  group.name = 'HANGAR_09';
+  const root = new THREE.Group();
+  root.name = 'HANGAR_09';
+  // Only this static bay is baked. Sliding leaves, repair rigs and yard stay independent.
+  const group = staticRegion(root, 'Hangar_Bay_Static');
+  const corridor = staticRegion(root, 'Launch_Corridor_Static');
+  // Keep the playable lane clear: no old bay-side walls or crates are placed on x=0, z<-8.
+  corridor.userData.clearLane = { minX: -5.2, maxX: 5.2, minZ: -27, maxZ: -8 };
+  const arena = createArena(materials);
+  root.add(arena.group);
+  const doorFrame = staticRegion(root, 'Launch_Gate_Frame');
+  const doorRig = createDoors(root, doorFrame, materials);
+  const repairRig = { arms: [-1, 1].map(side => root.getObjectByName(side < 0 ? 'Repair_Arm_L' : 'Repair_Arm_R')), setRetracted(amount) { this.arms.forEach((arm, index) => { if (arm) arm.position.x = (index ? 1 : -1) * (3.7 + THREE.MathUtils.clamp(amount, 0, 1) * 1.65); }); } };
   box(group, [44, 0.3, 58], [0, -0.25, -2], materials.floor, 0);
   for (let row = -6; row < 7; row += 1) {
     for (let column = -5; column < 6; column += 1) {
@@ -52,10 +227,11 @@ export function createHangar(materials) {
     }
   }
   cylinder(group, 3.8, 0.26, [0, 0.05, 0], materials.dark, [0, 0, 0], 96);
-  cylinder(group, 3.54, 0.16, [0, 0.22, 0], materials.floor, [0, 0, 0], 96);
-  ring(group, 3.6, 0.04, [0, 0.28, 0], materials.cyan, [Math.PI / 2, 0, 0]);
-  ring(group, 3.83, 0.05, [0, 0.14, 0], materials.steel, [Math.PI / 2, 0, 0]);
-  ring(group, 3.1, 0.011, [0, 0.31, 0], materials.steel, [Math.PI / 2, 0, 0]);
+  cylinder(group, PAD_RADIUS, 0.16, [0, 0.22, 0], materials.floor, [0, 0, 0], 128);
+  createPadRamp(group, materials);
+  ring(group, 3.6, 0.014, [0, groundHeight(3.6, 0) + 0.012, 0], materials.cyan, [Math.PI / 2, 0, 0]);
+  ring(group, 5.3, 0.015, [0, GROUND_HEIGHT, 0], materials.steel, [Math.PI / 2, 0, 0]);
+  ring(group, 3.1, 0.009, [0, groundHeight(3.1, 0) + 0.01, 0], materials.steel, [Math.PI / 2, 0, 0]);
   for (let index = 0; index < 32; index += 1) {
     const angle = index / 32 * Math.PI * 2;
     box(group, [0.2, 0.018, 0.4], [Math.sin(angle) * 3.3, 0.316, Math.cos(angle) * 3.3], index % 4 ? materials.caution : materials.ivory, 0.005, [0, angle - 0.25, 0]);
@@ -93,16 +269,14 @@ export function createHangar(materials) {
     }
   }
   box(group, [23, 0.3, 42], [0, 11.1, -5], materials.dark);
-  box(group, [22, 11, 0.65], [0, 5.4, -14.7], materials.wall);
-  plate(group, [9.2, 8.3, 0.36], [0, 4.1, -14.2], materials.dark, 0.9);
-  for (const side of [-1, 1]) {
-    plate(group, [4.31, 7.65, 0.2], [side * 2.22, 3.85, -13.96], materials.floor, 0.4);
-    box(group, [0.06, 6.5, 0.08], [side * 4.36, 3.8, -13.71], materials.amber);
-    box(group, [0.05, 7.13, 0.08], [side * 0.11, 3.75, -13.76], materials.cyan);
-    for (let index = 0; index < 5; index += 1) {
-      box(group, [3.7, 0.07, 0.06], [side * 2.22, 0.85 + index * 1.32, -13.8], materials.steel);
-    }
-  }
+  // A flush bulkhead cap remains above the opening; the opening itself is never filled.
+  box(doorFrame, [10.0, 0.42, 0.82], [0, 9.78, -14.7], materials.dark);
+  // The rear wall is split around the 9.2m x 8.3m clear opening.
+  box(group, [6.0, 11, 0.65], [-8.0, 5.4, -14.7], materials.wall);
+  box(group, [6.0, 11, 0.65], [8.0, 5.4, -14.7], materials.wall);
+  box(group, [10.0, 2.7, 0.65], [0, 9.65, -14.7], materials.wall);
+  // Door leaves, rails and warning strips are supplied by createDoors().
+  // Do not add the former decorative plates here: they visually read as a second closed gate.
   label(group, '09', 7, [6.9, 6.15, -14.32], '#c4c9bc');
   label(group, 'SECTOR / 09', 6.6, [0, 9.27, -14.3], '#d4ded9');
   label(group, 'AUTHORIZED PERSONNEL ONLY', 5.3, [0, 8.58, -14.3], '#788b8c');
@@ -129,7 +303,10 @@ export function createHangar(materials) {
   }
   cable(group, [[-4.6, 0.1, 0.2], [-4.1, 0.04, 1.8], [-2.9, 0.05, 2.3], [-2.2, 0.08, 1.6]], 0.05, materials.rubber);
   cable(group, [[5.7, 0.1, -6], [4.4, 0.05, -4.7], [4, 0.05, -2.4]], 0.07, materials.rubber);
-  return bake(group);
+  addHangarDetail(group, corridor, materials);
+  finishRegion(group);
+  finishRegion(corridor);
+  return { group: root, doorRig, arena, repairRig, getGroundHeight: groundHeight, bounds: arena.bounds };
 }
 
 

@@ -22,6 +22,57 @@
       <p>请使用支持 WebGL 2 的 Chrome 或 Edge，并在浏览器设置中启用硬件加速后重新打开。</p>
       <button class="scene-control" onclick="location.reload()">重新加载</button>
     </div>
+    <section id="training-overlay" class="training-overlay" role="dialog" aria-modal="true" aria-labelledby="training-caption" aria-describedby="training-detail" tabindex="-1" hidden aria-hidden="true">
+      <div class="training-letterbox training-letterbox-top" aria-hidden="true"></div>
+      <div class="training-letterbox training-letterbox-bottom" aria-hidden="true"></div>
+      <div class="training-hud" aria-label="训练状态">
+        <section class="training-fighter" aria-labelledby="training-player-label training-player-name">
+          <p class="training-unit-label" id="training-player-label">我方机体 · 左侧</p>
+          <h2 id="training-player-name">AXIOM 041</h2>
+          <div class="training-hp-readout"><span>耐久 / HP</span><span><b id="training-player-hp">100</b> / 100</span></div>
+          <div class="training-meter" role="meter" aria-labelledby="training-player-label training-player-name" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100" aria-valuetext="耐久 100 / 100" title="我方耐久 100 / 100"><i id="training-player-bar"></i></div>
+        </section>
+        <div class="training-round-readout"><span>训练回合</span><strong id="training-round">00 / 12</strong></div>
+        <section class="training-fighter" aria-labelledby="training-enemy-label training-enemy-name">
+          <p class="training-unit-label" id="training-enemy-label">对手机体 · 右侧</p>
+          <h2 id="training-enemy-name">NULLWALKER</h2>
+          <div class="training-hp-readout"><span>耐久 / HP</span><span><b id="training-enemy-hp">100</b> / 100</span></div>
+          <div class="training-meter" role="meter" aria-labelledby="training-enemy-label training-enemy-name" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100" aria-valuetext="耐久 100 / 100" title="对手耐久 100 / 100"><i id="training-enemy-bar"></i></div>
+        </section>
+      </div>
+      <div class="training-open-frame" aria-hidden="true"><span>SECTOR 09 / TRAINING RANGE</span><span>HANGAR ↔ FIELD</span></div>
+      <div class="training-footer">
+        <div class="training-phase" role="status" aria-live="polite" aria-atomic="true">
+          <p class="training-eyebrow" id="training-eyebrow">TRAINING GROUND // OUTBOUND</p>
+          <h2 id="training-caption">前往训练场</h2>
+          <p id="training-detail">机体将离开机库，在室外训练场与 NULLWALKER 对抗。</p>
+        </div>
+        <div class="training-actions" aria-label="训练控制">
+          <button id="skip-cinematic" type="button" hidden disabled>跳过出击转场</button>
+          <button id="cancel-training" type="button" hidden disabled>取消训练</button>
+        </div>
+        <p id="training-log" class="training-log" role="status" aria-live="polite" aria-atomic="true">等待训练开始。</p>
+      </div>
+    </section>
+    <section id="gameplay-hud" class="gameplay-hud" hidden aria-hidden="true" aria-label="战场 HUD">
+      <header class="gameplay-topbar">
+        <div class="gameplay-mode"><span class="gameplay-kicker">IRONCLAD // LIVE OPERATION</span><strong id="gameplay-mode-label">战区作战 · SECTOR 09</strong></div>
+        <div class="gameplay-objectives" id="gameplay-objectives" aria-label="当前目标">
+          <article class="gameplay-objective is-active"><span class="objective-index">01</span><div><b>占领前沿据点</b><small>保持信标在线</small></div><span class="objective-state">进行中</span></article>
+          <article class="gameplay-objective"><span class="objective-index">02</span><div><b>清除敌方单位</b><small>NULLWALKER 编队</small></div><span class="objective-state">待命</span></article>
+        </div>
+        <div class="gameplay-controls"><button type="button" class="gameplay-icon-button" data-action="pause" aria-label="暂停战斗">Ⅱ</button><button type="button" class="gameplay-exit-button" id="gameplay-exit" data-action="retreat">撤退</button></div>
+      </header>
+      <div class="gameplay-status" aria-label="机体状态">
+        <div class="gameplay-stat gameplay-hp"><span>耐久 / HP</span><strong id="gameplay-player-hp">100 / 100</strong><i><b></b></i></div>
+        <div class="gameplay-stat gameplay-shield"><span>护盾 / SHIELD</span><strong id="gameplay-player-shield">75%</strong><i><b></b></i></div>
+        <div class="gameplay-stat gameplay-heat"><span>热量 / HEAT</span><strong id="gameplay-heat">18%</strong><i><b></b></i></div>
+        <div class="gameplay-stat gameplay-energy"><span>能量 / ENERGY</span><strong id="gameplay-energy">82%</strong><i><b></b></i></div>
+      </div>
+      <div id="gameplay-crosshair" class="gameplay-crosshair" aria-hidden="true"><span></span></div>
+      <p id="gameplay-prompt" class="gameplay-prompt" role="status" aria-live="polite">锁定目标以开始交战</p>
+      <nav class="gameplay-mobile-controls" aria-label="移动端战斗控制"><button type="button" data-action="move-left">左移</button><button type="button" data-action="move-forward">前进</button><button type="button" data-action="move-right">右移</button><button type="button" data-action="fire">开火</button><button type="button" data-action="ability">技能</button></nav>
+    </section>
     <div class="app-shell">
       <div class="ambient ambient-one"></div>
       <div class="ambient ambient-two"></div>
@@ -191,18 +242,34 @@
 
           <div class="mission-card">
             <div class="mission-icon">◒</div>
-            <div><span class="fighter-kicker">CURRENT SCENARIO</span><strong>机库试炼 · SECTOR 09</strong><p>对抗 NULLWALKER，检验你的配置。</p></div>
+            <div><span class="fighter-kicker">CURRENT SCENARIO</span><strong>室外训练场 · SECTOR 09</strong><p>机体离开机库、穿越通道，在真实训练场对抗 NULLWALKER，演算结束后自动返航。可跳过转场，或在出击与战斗阶段取消训练。</p></div>
           </div>
 
           <div class="stats-block">
             <div class="stats-head"><span>战斗参数</span><span class="selector-count">LIVE CALCULATION</span></div>
+            <div class="mission-route" id="mission-route" aria-label="任务航线">
+              <span class="mission-route-node is-active" data-route="bay">BAY 09</span><i></i><span class="mission-route-node" data-route="gate">GATE</span><i></i><span class="mission-route-node" data-route="field">RANGE</span><i></i><span class="mission-route-node" data-route="return">RETURN</span>
+            </div>
+            <div class="loadout-radar-card">
+              <div class="loadout-radar-title"><span>LOADOUT PROFILE</span><small id="loadout-radar-status">BALANCED / MK-II</small></div>
+              <svg id="loadout-radar" viewBox="0 0 220 150" role="img" aria-label="当前机体属性图表">
+                <g class="radar-grid"><polygon points="110,12 188,57 158,132 62,132 32,57"/><polygon points="110,38 162,68 142,118 78,118 58,68"/><polygon points="110,64 136,79 126,104 94,104 84,79"/><path d="M110 12v120M32 57l126 75M188 57L62 132M32 57l126 0M188 57l-126 75"/></g>
+                <polygon id="loadout-radar-shape" class="radar-shape" points="110,44 145,70 132,101 81,105 68,69"/>
+                <g class="radar-labels"><text x="110" y="8">POWER</text><text x="192" y="58">ARMOR</text><text x="164" y="145">SPEED</text><text x="56" y="145">SYNC</text><text x="6" y="58">HEAT</text></g>
+              </svg>
+              <div class="loadout-radar-values" aria-label="当前属性数值"><span id="radar-power">--</span><span id="radar-armor">--</span><span id="radar-speed">--</span><span id="radar-sync">--</span></div>
+            </div>
             <div class="stat-row"><span>火力输出</span><div class="stat-track"><i id="power-stat"></i></div><b id="power-stat-value">78</b></div>
             <div class="stat-row"><span>装甲强度</span><div class="stat-track"><i id="armor-stat"></i></div><b id="armor-stat-value">71</b></div>
             <div class="stat-row"><span>机动性能</span><div class="stat-track"><i id="speed-stat"></i></div><b id="speed-stat-value">83</b></div>
             <div class="stat-row"><span>系统同步</span><div class="stat-track"><i id="sync-stat"></i></div><b id="sync-stat-value">92</b></div>
           </div>
 
-          <button class="battle-button" id="start-battle"><span class="button-icon">⚡</span><span id="battle-button-label">启动战斗模拟</span><span class="button-arrow">↗</span></button>
+          <div class="battle-actions">
+            <button class="battle-button battle-button-training" id="start-training"><span class="button-mode">01 / TRAINING RANGE</span><span class="button-main"><span class="button-icon">◈</span><strong>驾驶训练</strong><span class="button-arrow">↗</span></span><small>COMPONENT FAMILIARIZATION · FREE ROAM</small></button>
+            <button class="battle-button battle-button-live" id="start-battle"><span class="button-mode">02 / LIVE OPERATION</span><span class="button-main"><span class="button-icon">⚡</span><strong id="battle-button-label">进入大战场</strong><span class="button-arrow">↗</span></span><small>CAPTURE &amp; ELIMINATE · SECTOR 09</small></button>
+          </div>
+          <p class="gameplay-note">训练场用于熟悉组件；大战场执行据点占领与敌军歼灭。</p>
 
           <div class="battle-log">
             <div class="log-head"><span>战斗记录</span><span id="log-state">STANDBY</span></div>

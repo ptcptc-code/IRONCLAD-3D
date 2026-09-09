@@ -40,6 +40,44 @@ const componentSecondaryColor = $('#component-secondary-color');
 const componentAccentColor = $('#component-accent-color');
 const logList = $('#log-list');
 const battleButton = $('#start-battle');
+const trainingButton = $('#start-training');
+const trainingOverlay = $('#training-overlay');
+const skipCinematicButton = $('#skip-cinematic');
+const cancelTrainingButton = $('#cancel-training');
+const appShell = $('.app-shell');
+const sceneHost = $('#scene-host');
+let currentTraining = null;
+let trainingView = { phase: 'IDLE', active: false, direction: 'idle', canSkip: false, canCancel: false };
+let trainingRestore = null;
+let pendingTrainingFocus = null;
+const buildControlStates = new Map();
+
+function focusTrainingControl() {
+  const controls = [skipCinematicButton, cancelTrainingButton].filter(button => !button.hidden && !button.disabled);
+  (controls[0] || trainingOverlay).focus({ preventScroll: true });
+}
+
+function restoreTrainingFocus() {
+  const visible = element => {
+    if (!element?.isConnected || element.disabled || element.closest('[inert], [hidden], [aria-hidden="true"]') || !element.getClientRects().length) return false;
+    for (let node = element; node; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (style.visibility === 'hidden' || style.opacity === '0') return false;
+    }
+    return true;
+  };
+  const errorButton = $('#scene-error:not([hidden]) button');
+  const target = errorButton || (visible(pendingTrainingFocus) ? pendingTrainingFocus : [battleButton, $('#photo-mode'), $('.brand')].find(visible));
+  if (target) target.focus({ preventScroll: true });
+  else {
+    const tabindex = document.body.getAttribute('tabindex');
+    document.body.tabIndex = -1;
+    document.body.focus({ preventScroll: true });
+    if (tabindex === null) document.body.removeAttribute('tabindex');
+    else document.body.setAttribute('tabindex', tabindex);
+  }
+  if (!state.battleRunning) pendingTrainingFocus = null;
+}
 
 function clamp(value, min = 0, max = 100) {
   return Math.min(max, Math.max(min, value));
@@ -168,6 +206,18 @@ function getUnitId() {
 
 function renderStats() {
   const stats = calculateStats();
+  const max = 100;
+  const points = [stats.power, stats.armor, stats.speed, stats.sync].map(value => Math.max(8, Math.min(max, value)));
+  const radar = document.getElementById('loadout-radar-shape');
+  if (radar) {
+    const center = [110, 82];
+    const axes = [[110, 12], [188, 57], [158, 132], [62, 132], [32, 57]];
+    const values = [points[0], points[1], points[2], points[3], Math.max(8, Math.round((stats.armor + stats.sync) / 2))];
+    radar.setAttribute('points', axes.map(([x, y], index) => `${center[0] + (x - center[0]) * values[index] / max},${center[1] + (y - center[1]) * values[index] / max}`).join(' '));
+    ['power', 'armor', 'speed', 'sync'].forEach(key => { const el = document.getElementById('radar-' + key); if (el) el.textContent = String(stats[key]).padStart(2, '0'); });
+  }
+  const radarProfile = document.getElementById('loadout-radar-status');
+  if (radarProfile) radarProfile.textContent = stats.power > stats.speed + 7 ? 'ASSAULT / MK-III' : stats.speed > stats.armor + 9 ? 'SCOUT / MK-I' : 'BALANCED / MK-II';
   ['power', 'armor', 'speed', 'sync'].forEach((key) => {
     $('#' + key + '-stat').style.width = stats[key] + '%';
     $('#' + key + '-stat-value').textContent = stats[key];
@@ -177,6 +227,7 @@ function renderStats() {
   $('#sync-rate').textContent = (stats.sync * 0.97).toFixed(1) + '%';
   const profile = stats.power > stats.speed + 7 ? 'ASSAULT / MK-III' : stats.speed > stats.armor + 9 ? 'SCOUT / MK-I' : 'BALANCED / MK-II';
   $('#loadout-profile').textContent = profile;
+  if (radarProfile) radarProfile.textContent = profile;
 }
 
 function renderHealth() {
@@ -185,6 +236,18 @@ function renderHealth() {
   $('#player-hp').textContent = Math.round(state.playerHp);
   $('#enemy-hp').textContent = Math.round(state.enemyHp);
   $('#round-badge').textContent = 'ROUND ' + String(state.round).padStart(2, '0');
+  $('#training-player-name').textContent = getMechName().replace(' // ', ' ');
+  $('#training-round').textContent = String(state.round).padStart(2, '0') + ' / 12';
+  ['player', 'enemy'].forEach(side => {
+    const hp = Math.round(state[side + 'Hp']);
+    const bar = $('#training-' + side + '-bar');
+    const meter = bar.parentElement;
+    bar.style.width = hp + '%';
+    $('#training-' + side + '-hp').textContent = hp;
+    meter.setAttribute('aria-valuenow', String(hp));
+    meter.setAttribute('aria-valuetext', '耐久 ' + hp + ' / 100');
+    meter.title = (side === 'player' ? '我方' : '对手') + '耐久 ' + hp + ' / 100';
+  });
 }
 
 function setTheme() {
@@ -213,27 +276,154 @@ function addLog(message, type = '') {
   logList.appendChild(entry);
   while (logList.children.length > 5) logList.removeChild(logList.firstElementChild);
   logList.scrollTop = logList.scrollHeight;
+  const compact = $('#training-log');
+  if (compact) compact.textContent = message;
 }
 
 function clearLogs() {
   logList.innerHTML = '';
+  $('#training-log').textContent = '等待训练开始。';
 }
 
-function wait(milliseconds) {
-  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+function enterTrainingView() {
+  if (trainingRestore) return;
+  const nodes = [appShell, sceneHost];
+  trainingRestore = {
+    focus: currentTraining?.focus || document.activeElement,
+    scrollX: currentTraining?.scrollX ?? window.scrollX,
+    scrollY: currentTraining?.scrollY ?? window.scrollY,
+    nodes: nodes.map(node => ({ node, inert: node.inert, aria: node.getAttribute('aria-hidden') }))
+  };
+  pendingTrainingFocus = trainingRestore.focus;
+  trainingOverlay.hidden = false;
+  trainingOverlay.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('training-active');
+  trainingOverlay.focus({ preventScroll: true });
+  nodes.forEach(node => { node.inert = true; node.setAttribute('aria-hidden', 'true'); });
+}
+
+function leaveTrainingView() {
+  if (!trainingRestore) return;
+  const saved = trainingRestore;
+  trainingRestore = null;
+  saved.nodes.forEach(({ node, inert, aria }) => {
+    node.inert = inert;
+    if (aria === null) node.removeAttribute('aria-hidden');
+    else node.setAttribute('aria-hidden', aria);
+  });
+  document.body.classList.remove('training-active', 'training-cinematic', 'training-combat');
+  restoreTrainingFocus();
+  trainingOverlay.hidden = true;
+  trainingOverlay.setAttribute('aria-hidden', 'true');
+  window.scrollTo({ left: saved.scrollX, top: saved.scrollY, behavior: 'instant' });
+}
+
+function updateTrainingView(event) {
+  const detail = event.detail || event;
+  trainingView = { ...trainingView, ...detail };
+  const { active, direction, phase } = trainingView;
+  const route = document.getElementById('mission-route');
+  if (route) {
+    const routeKey = !active ? 'bay' : direction === 'return' ? 'return' : direction === 'combat' ? 'field' : ['DOOR_OPEN', 'DEPARTURE', 'TRANSIT'].includes(phase) ? 'gate' : 'field';
+    route.dataset.route = routeKey;
+    route.querySelectorAll('[data-route]').forEach(node => node.classList.toggle('is-active', node.dataset.route === routeKey));
+  }
+  const entering = active && !trainingRestore;
+  if (active) enterTrainingView();
+  document.body.classList.toggle('training-active', active);
+  document.body.classList.toggle('training-cinematic', active && (direction === 'outbound' || direction === 'return'));
+  document.body.classList.toggle('training-combat', active && (direction === 'combat' || phase.startsWith('RESULT')));
+  trainingOverlay.dataset.phase = phase;
+  $('#training-eyebrow').textContent = trainingView.eyebrow || 'TRAINING GROUND / SECTOR 09';
+  $('#training-caption').textContent = trainingView.caption || (active ? '训练进行中' : '整备就绪');
+  const descriptions = { outbound: '前往室外训练场 · 配置已锁定，可跳过出击转场。', combat: '实战演算进行中 · 命中瞬间结算耐久，可取消并安全返航。', return: '正在返回整备平台 · 本次耐久与回合记录将保留。', idle: '已返回机库，可检查记录并调整配置。' };
+  $('#training-detail').textContent = trainingView.detail || descriptions[direction];
+  const canSkip = active && trainingView.canSkip && ['outbound', 'return'].includes(direction);
+  const canCancel = active && trainingView.canCancel && ['outbound', 'combat'].includes(direction) && !currentTraining?.cancelled && !currentTraining?.finishing;
+  skipCinematicButton.hidden = !canSkip;
+  skipCinematicButton.disabled = !canSkip;
+  skipCinematicButton.textContent = direction === 'return' ? '跳过返航转场' : '跳过出击转场';
+  cancelTrainingButton.hidden = !canCancel;
+  cancelTrainingButton.disabled = !canCancel;
+  if (state.battleRunning && active) $('#battle-button-label').textContent = direction === 'return' ? '安全返航中…' : direction === 'outbound' ? '出击转场中…' : '训练进行中…';
+  if (active && (entering || !trainingOverlay.contains(document.activeElement) || document.activeElement.hidden || document.activeElement.disabled)) focusTrainingControl();
+  if (!active) leaveTrainingView();
+}
+window.addEventListener('ironclad:training', updateTrainingView);
+window.addEventListener('ironclad:renderer-error', () => {
+  currentTraining?.fail(new Error('3D 渲染上下文已丢失'));
+});
+
+function markTrainingCancelled(run) {
+  run.cancelled = true;
+  if (run.cancelLogged) return;
+  run.cancelLogged = true;
+  $('#log-state').textContent = 'CANCELLED';
+  addLog('训练已取消，已保留当前回合与耐久，正在安全返航。', 'muted');
+  cancelTrainingButton.hidden = true;
+  cancelTrainingButton.disabled = true;
+  if (document.activeElement === cancelTrainingButton) focusTrainingControl();
+}
+
+function requestTrainingCancel(run) {
+  if (run.error) return Promise.resolve();
+  markTrainingCancelled(run);
+  if (!run.cancelPromise) {
+    try { run.cancelPromise = Promise.resolve(run.scene.cancelTraining()); }
+    catch (error) { run.fail(error); return Promise.resolve(); }
+    run.cancelPromise.catch(run.fail);
+  }
+  return run.cancelPromise;
 }
 
 function lockBuild(locked) {
-  document.querySelectorAll('[data-part], [data-option], [data-palette], [data-preset], #reset-build, #export-mech').forEach(button => { button.disabled = locked; });
+  const controls = '[data-part], [data-option], [data-palette], [data-preset], [data-component-palette], #reset-build, #export-mech, #apply-colors-all, #component-color-panel input, #quality-select, #take-photo, #photo-mode, #reset-camera, #detail-camera, #scene-camera, #auto-rotate';
+  if (locked) document.querySelectorAll(controls).forEach(control => {
+    if (!buildControlStates.has(control)) buildControlStates.set(control, control.disabled);
+    control.disabled = true;
+  });
+  else {
+    buildControlStates.forEach((disabled, control) => { control.disabled = disabled; });
+    buildControlStates.clear();
+  }
   document.body.classList.toggle('build-locked', locked);
 }
 
+function commitImpact(side, damage, critical) {
+  const target = side === 'player' ? 'enemyHp' : 'playerHp';
+  state[target] = clamp(state[target] - damage);
+  renderHealth();
+  const actor = side === 'player' ? '你的机体' : 'NULLWALKER';
+  addLog('R-' + String(state.round).padStart(2, '0') + ' · ' + actor + (critical ? '暴击 ' : '命中 ') + damage + ' 点伤害。', side === 'player' ? 'success' : 'damage');
+}
+
+
 async function runBattle() {
-  if (!window.mechScene?.available) {
-    addLog('3D 渲染未就绪，请检查硬件加速并重新加载。', 'damage');
+  const scene = window.mechScene;
+  if (state.battleRunning || scene?.getTrainingState?.().active) return;
+  if (!scene?.available) {
+    addLog('3D 渲染未就绪，请等待场景准备完成；若持续失败，请检查硬件加速并重新加载。', 'damage');
     return;
   }
   state.battleRunning = true;
+  const run = { scene, focus: document.activeElement, scrollX: window.scrollX, scrollY: window.scrollY, cancelled: false, cancelLogged: false, finishing: false, error: null, cancelPromise: null };
+  let signalFailure;
+  const failure = new Promise(resolve => { signalFailure = resolve; });
+  run.fail = error => {
+    if (run.error) return;
+    run.error = error instanceof Error ? error : new Error(String(error));
+    try { scene.resetTraining(); } catch (resetError) { console.error(resetError); }
+    signalFailure();
+  };
+  currentTraining = run;
+  const awaitScene = async action => {
+    if (run.error) throw run.error;
+    if (run.cancelled) return false;
+    const completed = await Promise.race([action(), failure]);
+    if (run.error) throw run.error;
+    if (completed === false) markTrainingCancelled(run);
+    return !run.cancelled;
+  };
   state.playerHp = 100;
   state.enemyHp = 100;
   state.round = 0;
@@ -246,48 +436,69 @@ async function runBattle() {
   const stats = calculateStats();
   const opponent = { power: 84, armor: 72, speed: 68, sync: 79 };
   try {
-    window.mechScene.setBattle(true);
+    // A cancelled stage unwinds through finally, which awaits the entire safe return.
+    if (!await awaitScene(() => scene.beginTraining())) return;
     addLog('NULLWALKER 已接入试炼场，配置已锁定。');
-    await wait(1100);
     for (let round = 1; round <= 12; round += 1) {
+      if (round > 1 && !await awaitScene(() => scene.wait(0.3))) return;
       state.round = round;
+      renderHealth();
       const order = stats.speed >= opponent.speed ? ['player', 'enemy'] : ['enemy', 'player'];
       for (const side of order) {
-        await wait(670);
         const attacking = side === 'player' ? stats : opponent;
         const defending = side === 'player' ? opponent : stats;
         const target = side === 'player' ? 'enemyHp' : 'playerHp';
         const actor = side === 'player' ? '你的机体' : 'NULLWALKER';
-        if (Math.random() < defending.speed * 0.0015) {
-          addLog(actor + '的攻击被闪避。', 'muted');
-          continue;
-        }
-        const critical = Math.random() < attacking.sync * 0.002;
-        const damage = Math.round((9 + attacking.power * 0.16 + Math.random() * 5) * (1 - defending.armor * 0.003) * (critical ? 1.55 : 1));
-        state[target] = clamp(state[target] - damage);
-        window.mechScene.strike(side, side === 'player' ? state.parts.weapon : 'arc');
-        renderHealth();
-        addLog('R-' + String(round).padStart(2, '0') + ' · ' + actor + (critical ? '暴击 ' : '命中 ') + damage + ' 点伤害。', side === 'player' ? 'success' : 'damage');
+        const dodged = Math.random() < defending.speed * 0.0015;
+        const critical = !dodged && Math.random() < attacking.sync * 0.002;
+        const damage = dodged ? 0 : Math.round((9 + attacking.power * 0.16 + Math.random() * 5) * (1 - defending.armor * 0.003) * (critical ? 1.55 : 1));
+        let committed = false;
+        if (!await awaitScene(() => scene.performAttack(side, side === 'player' ? state.parts.weapon : 'arc', {
+          dodged, critical,
+          onImpact: () => {
+            if (committed || dodged || run.cancelled || run.error || currentTraining !== run) return;
+            committed = true;
+            commitImpact(side, damage, critical);
+          }
+        }))) return;
+        if (dodged) addLog(actor + '的攻击被闪避。', 'muted');
         if (state[target] <= 0) break;
       }
       renderHealth();
       if (state.playerHp <= 0 || state.enemyHp <= 0) break;
     }
-    await wait(450);
+    if (!await awaitScene(() => scene.wait(0.2))) return;
     const result = state.enemyHp <= 0 ? 'VICTORY' : state.playerHp <= 0 ? 'DEFEAT' : 'TIMEOUT';
+    run.finishing = true;
+    cancelTrainingButton.hidden = true;
+    cancelTrainingButton.disabled = true;
+    if (document.activeElement === cancelTrainingButton) focusTrainingControl();
     $('#log-state').textContent = result;
-    window.mechScene.endBattle(result);
     const messages = { VICTORY: '演算胜利。机体通过本次实战测试。', DEFEAT: '机体失去响应。尝试增加装甲或机动后再战。', TIMEOUT: '回合上限已到达，双方撤离试炼场。' };
     addLog(messages[result], result === 'VICTORY' ? 'success' : result === 'DEFEAT' ? 'damage' : 'muted');
+    if (!await awaitScene(() => scene.finishTraining(result))) return;
+    addLog('已返回机库 · ' + messages[result] + ' 我方耐久 ' + Math.round(state.playerHp) + '/100，对手耐久 ' + Math.round(state.enemyHp) + '/100，回合 ' + state.round + '。', 'muted');
   } catch (error) {
-    $('#log-state').textContent = 'ERROR';
-    addLog('模拟中断，请重新加载场景。', 'damage');
-    console.error(error);
+    run.fail(error);
   } finally {
-    state.battleRunning = false;
-    battleButton.disabled = false;
-    lockBuild(false);
-    $('#battle-button-label').textContent = '再次模拟';
+    try {
+      if (run.cancelled && !run.error) await Promise.race([requestTrainingCancel(run), failure]);
+    } catch (error) {
+      run.fail(error);
+    } finally {
+      if (run.error) {
+        $('#log-state').textContent = 'ERROR';
+        addLog('训练中断，已保留最后结算的耐久与回合。请重新加载场景。', 'damage');
+        console.error(run.error);
+      }
+      currentTraining = null;
+      state.battleRunning = false;
+      battleButton.disabled = false;
+      lockBuild(false);
+      $('#battle-button-label').textContent = run.error ? '场景中断 · 重新加载' : '再次模拟';
+      if (trainingRestore) updateTrainingView({ phase: 'IDLE', active: false, direction: 'idle', canSkip: false, canCancel: false });
+      if (pendingTrainingFocus) restoreTrainingFocus();
+    }
   }
 }
 
@@ -389,8 +600,26 @@ $('#apply-colors-all').addEventListener('click', () => {
   renderMech();
 });
 
-battleButton.addEventListener('click', () => {
-  if (!state.battleRunning) runBattle();
+battleButton.addEventListener('click', () => { if (!state.battleRunning) window.mechScene?.startBattlefield?.(state.parts); });
+trainingButton.addEventListener('click', () => { if (!state.battleRunning) runBattle(); });
+skipCinematicButton.addEventListener('click', () => {
+  if (!currentTraining || !trainingView.canSkip || !['outbound', 'return'].includes(trainingView.direction)) return;
+  try { currentTraining.scene.skipCinematic(); } catch (error) { currentTraining.fail(error); }
+});
+cancelTrainingButton.addEventListener('click', () => {
+  if (!currentTraining || !trainingView.canCancel || !['outbound', 'combat'].includes(trainingView.direction) || currentTraining.finishing || currentTraining.cancelled) return;
+  requestTrainingCancel(currentTraining);
+});
+trainingOverlay.addEventListener('keydown', event => {
+  if (event.key !== 'Tab' || !trainingView.active) return;
+  const controls = [skipCinematicButton, cancelTrainingButton].filter(button => !button.hidden && !button.disabled);
+  const index = controls.indexOf(document.activeElement);
+  event.preventDefault();
+  if (!controls.length) trainingOverlay.focus({ preventScroll: true });
+  else {
+    const next = index < 0 ? (event.shiftKey ? controls.length - 1 : 0) : (index + (event.shiftKey ? controls.length - 1 : 1)) % controls.length;
+    controls[next].focus({ preventScroll: true });
+  }
 });
 
 $('#reset-build').addEventListener('click', () => {

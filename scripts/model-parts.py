@@ -40,8 +40,12 @@ def material(name):
     shader.inputs['Metallic'].default_value = metallic
     shader.inputs['Roughness'].default_value = roughness
     if name in ('cyan', 'amber', 'white'):
-        shader.inputs['Emission Color'].default_value = (*linear, 1)
-        shader.inputs['Emission Strength'].default_value = 2.2
+        emission = shader.inputs.get('Emission Color') or shader.inputs.get('Emission')
+        if emission:
+            emission.default_value = (*linear, 1)
+        strength = shader.inputs.get('Emission Strength')
+        if strength:
+            strength.default_value = 2.2
     result.diffuse_color = (*linear, 1)
     return result
 
@@ -170,7 +174,7 @@ def root_part(slot, kind):
     name = slot + '_' + kind
     old = bpy.data.objects.get(name)
     if old:
-        for child in list(old.children_recursive):
+        for child in list(descendants(old)):
             bpy.data.objects.remove(child, do_unlink=True)
         bpy.data.objects.remove(old, do_unlink=True)
     result = group(name)
@@ -181,12 +185,22 @@ def root_part(slot, kind):
     return result
 
 
+def descendants(root):
+    result = []
+    stack = list(root.children)
+    while stack:
+        child = stack.pop()
+        result.append(child)
+        stack.extend(child.children)
+    return result
+
+
 def finish_part(root):
-    pivots = [root] + [child for child in root.children_recursive if child.get('pivot')]
+    pivots = [root] + [child for child in descendants(root) if child.get('pivot')]
     bpy.context.view_layer.update()
     for pivot in pivots:
         buckets = {}
-        for child in list(pivot.children_recursive):
+        for child in list(descendants(pivot)):
             if child.type != 'MESH':
                 continue
             nearest = child.parent
@@ -211,7 +225,7 @@ def finish_part(root):
             bpy.context.scene.collection.objects.link(result)
             result.parent = pivot
             result['materialChannel'] = color
-    for child in list(root.children_recursive):
+    for child in list(descendants(root)):
         if child.type == 'EMPTY' and not child.children and not child.get('pivot') and not child.get('socket'):
             bpy.data.objects.remove(child, do_unlink=True)
     root['buildComplete'] = True
@@ -380,23 +394,85 @@ def build_arms(kind):
     return root
 
 
+def locomotion_pivot(root, parent, role, position, side, parent_position=(0, 0, 0), front=None, index=None):
+    labels = [root.name, 'left' if side < 0 else 'right']
+    if front is not None:
+        labels.append('front' if front > 0 else 'rear')
+    labels.append(role)
+    if index is not None:
+        labels.append(str(index).zfill(2))
+    pivot = group('_'.join(labels), Vector(position) - Vector(parent_position), parent)
+    pivot['pivot'] = True
+    pivot['locomotionJoint'] = role
+    pivot['legSide'] = side
+    if front is not None:
+        pivot['legFront'] = front
+    return pivot
+
+
+def locomotion_geometry(pivot, model_position):
+    # Author the existing shapes in model coordinates, then finish_part bakes
+    # this temporary frame into its nearest pivot. No vertex slicing is needed.
+    return group(pivot.name + '_model_space', -Vector(model_position), pivot)
+
+
+def locomotion_chain(root, hip, knee, ankle, side, front=None):
+    upper = locomotion_pivot(root, root, 'hip', hip, side, front=front)
+    lower = locomotion_pivot(root, upper, 'knee', knee, side, hip, front)
+    foot = locomotion_pivot(root, lower, 'foot', ankle, side, knee, front)
+    return tuple(locomotion_geometry(pivot, position) for pivot, position in ((upper, hip), (lower, knee), (foot, ankle)))
+
+
+def tread_link(root, side, index, position, rotation, phase, curved=False):
+    pivot = locomotion_pivot(root, root, 'tread', position, side, index=index)
+    pivot.rotation_euler = (CONVERT @ Euler(rotation).to_matrix() @ CONVERT.transposed()).to_euler()
+    pivot['treadRestPhase'] = phase % 1.0
+    pivot['treadIndex'] = index
+    panel(pivot, (1.02, 0.1, 0.19 if curved else 0.17), (0, 0, 0), 'rubber', cut=0.04 if curved else 0.05, bevel=0.006 if curved else 0.008)
+
+
 def build_legs(kind):
+    if kind not in OPTIONS['legs']:
+        raise ValueError('Unknown leg option: ' + kind)
     root = root_part('legs', kind)
+    root['assetSource'] = 'IRONCLAD-LOCOMOTION.glb / Blender generator'
+    root['assetRevision'] = 2
+    root['locomotionRigVersion'] = 1
+    root['locomotionReady'] = True
+    root['locomotionStride'] = {'strider': 1.8, 'anchor': 1.25, 'reverse': 2.1, 'tetrapod': 1.5, 'hover': 2.0, 'treads': 4.32 + math.tau * 0.46}[kind]
     root['upperOffset'] = {'hover': -0.38, 'tetrapod': -0.43, 'treads': -1.27}.get(kind, 0)
     if kind == 'treads':
+        # Phase starts at the rear of the bottom run and moves toward +Z.
+        # The loop is bottom -> front arc -> top -> rear arc (Y-up units).
+        loop_length = 4.32 + math.tau * 0.46
+        root['treadLoopLength'] = loop_length
+        root['treadHalfLength'] = 1.08
+        root['treadRadius'] = 0.46
+        root['treadCenterY'] = 0.64
         panel(root, (2.55, 0.5, 2.44), (0, 1.26, 0), 'dark')
         tube(root, 0.77, 0.36, (0, 1.58, 0), 'steel', segments=24)
         ring(root, 0.78, 0.035, (0, 1.76, 0), 'bronze', (0, 1, 0))
         for side in (-1, 1):
             for index in range(5):
-                joint(root, (side * 1.17, 0.64, -0.98 + index * 0.49), 0.36, 0.95)
+                center = (side * 1.17, 0.64, -0.98 + index * 0.49)
+                wheel = locomotion_pivot(root, root, 'wheel', center, side, index=index)
+                wheel['wheelRadius'] = 0.36
+                wheel['wheelIndex'] = index
+                joint(wheel, (0, 0, 0), 0.36, 0.95)
+            link_index = 0
             for level in (0.18, 1.1):
                 for index in range(13):
-                    panel(root, (1.02, 0.1, 0.17), (side * 1.17, level, -1.08 + index * 0.18), 'rubber', cut=0.05, bevel=0.008)
+                    z = -1.08 + index * 0.18
+                    distance = z + 1.08 if level < 0.64 else 2.16 + math.pi * 0.46 + 1.08 - z
+                    tread_link(root, side, link_index, (side * 1.17, level, z), (0, 0, 0), distance / loop_length)
+                    link_index += 1
             for front in (-1, 1):
                 for index in range(9):
                     angle = -math.pi / 2 + index * math.pi / 8
-                    panel(root, (1.02, 0.1, 0.19), (side * 1.17, 0.64 + math.sin(angle) * 0.46, front * (1.08 + math.cos(angle) * 0.46)), 'rubber', (front * -angle + math.pi / 2, 0, 0), cut=0.04, bevel=0.006)
+                    distance = 2.16 + (angle + math.pi / 2) * 0.46 if front > 0 else 4.32 + math.pi * 0.46 + (math.pi / 2 - angle) * 0.46
+                    center = (side * 1.17, 0.64 + math.sin(angle) * 0.46, front * (1.08 + math.cos(angle) * 0.46))
+                    tread_link(root, side, link_index, center, (front * -angle + math.pi / 2, 0, 0), distance / loop_length, curved=True)
+                    link_index += 1
             for index in range(3):
                 panel(root, (1.07, 0.27, 0.84), (side * 1.17, 1.34, -0.92 + index * 0.92), 'paint')
                 panel(root, (0.57, 0.05, 0.61), (side * 1.17, 1.5, -0.92 + index * 0.92), 'ivory')
@@ -409,11 +485,14 @@ def build_legs(kind):
         for side in (-1, 1):
             for front in (-1, 1):
                 center = (side * 0.9, 1.19, front * 0.55)
-                piston(root, (side * 0.48, 2.12, front * 0.34), center, 0.065)
-                plate(root, [(-0.28, 0.54), (0.23, 0.54), (0.41, -0.15), (0.09, -0.61), (-0.34, -0.3)], 0.52, center, 'paint', (0, side * 0.2, side * -0.13))
-                panel(root, (0.36, 0.64, 0.08), (center[0], center[1], center[2] + 0.31), 'ivory')
-                nozzle(root, (center[0], 0.6, center[2]), 0.28)
-                panel(root, (0.07, 0.4, 0.05), (center[0], 1.21, center[2] + 0.37), 'cyan')
+                mount = (side * 0.48, 2.12, front * 0.34)
+                pivot = locomotion_pivot(root, root, 'pod', mount, side, front=front)
+                pod = locomotion_geometry(pivot, mount)
+                piston(pod, mount, center, 0.065)
+                plate(pod, [(-0.28, 0.54), (0.23, 0.54), (0.41, -0.15), (0.09, -0.61), (-0.34, -0.3)], 0.52, center, 'paint', (0, side * 0.2, side * -0.13))
+                panel(pod, (0.36, 0.64, 0.08), (center[0], center[1], center[2] + 0.31), 'ivory')
+                nozzle(pod, (center[0], 0.6, center[2]), 0.28)
+                panel(pod, (0.07, 0.4, 0.05), (center[0], 1.21, center[2] + 0.37), 'cyan')
     elif kind == 'tetrapod':
         panel(root, (1.65, 0.42, 1.56), (0, 2.2, 0), 'dark')
         tube(root, 0.51, 0.39, (0, 2.55, 0), 'steel')
@@ -422,16 +501,17 @@ def build_legs(kind):
                 hip = (side * 0.61, 2.25, front * 0.42)
                 knee = (side * 1.46, 1.75, front * 1.02)
                 ankle = (side * 1.82, 0.37, front * 1.59)
-                for center in (hip, knee, ankle):
-                    joint(root, center, 0.22, 0.47)
-                strut(root, hip, knee, 0.17, 'dark')
-                strut(root, knee, ankle, 0.15, 'dark')
-                panel(root, (0.48, 0.88, 0.37), (side * 1.64, 1.07, front * 1.32), 'ivory', (front * 0.4, 0, side * -0.23))
-                panel(root, (0.64, 0.42, 0.68), knee, 'paint')
-                piston(root, (side * 1.21, 1.91, front * 1.18), (side * 1.56, 0.54, front * 1.83), 0.055)
-                panel(root, (0.76, 0.22, 0.81), (side * 1.83, 0.17, front * 1.75), 'dark')
-                panel(root, (0.51, 0.13, 0.35), (side * 1.83, 0.33, front * 1.95), 'paint')
-                panel(root, (0.28, 0.055, 0.04), (side * 1.46, 1.78, front * 1.38), 'cyan')
+                upper, lower, foot = locomotion_chain(root, hip, knee, ankle, side, front)
+                for parent, center in ((upper, hip), (lower, knee), (foot, ankle)):
+                    joint(parent, center, 0.22, 0.47)
+                strut(upper, hip, knee, 0.17, 'dark')
+                strut(lower, knee, ankle, 0.15, 'dark')
+                panel(lower, (0.48, 0.88, 0.37), (side * 1.64, 1.07, front * 1.32), 'ivory', (front * 0.4, 0, side * -0.23))
+                panel(lower, (0.64, 0.42, 0.68), knee, 'paint')
+                piston(lower, (side * 1.21, 1.91, front * 1.18), (side * 1.56, 0.54, front * 1.83), 0.055)
+                panel(foot, (0.76, 0.22, 0.81), (side * 1.83, 0.17, front * 1.75), 'dark')
+                panel(foot, (0.51, 0.13, 0.35), (side * 1.83, 0.33, front * 1.95), 'paint')
+                panel(lower, (0.28, 0.055, 0.04), (side * 1.46, 1.78, front * 1.38), 'cyan')
     else:
         for side in (-1, 1):
             heavy = kind == 'anchor'
@@ -439,33 +519,34 @@ def build_legs(kind):
             hip = (side * (0.67 if heavy else 0.54), 2.87, 0)
             knee = (side * (0.76 if heavy else 0.68), 1.65 if not reverse else 2.08, 0.53 if reverse else 0.08)
             ankle = (side * (0.84 if reverse else 0.76), 0.44, -0.28 if reverse else 0.03)
-            joint(root, hip, 0.28 if heavy else 0.23, 0.66 if heavy else 0.48)
-            joint(root, knee, 0.25 if heavy else 0.22, 0.73 if heavy else 0.54)
-            joint(root, ankle, 0.19, 0.51)
-            strut(root, hip, knee, 0.25 if heavy else 0.17, 'dark')
-            strut(root, knee, ankle, 0.27 if heavy else 0.16, 'dark')
+            upper, lower, foot = locomotion_chain(root, hip, knee, ankle, side)
+            joint(upper, hip, 0.28 if heavy else 0.23, 0.66 if heavy else 0.48)
+            joint(lower, knee, 0.25 if heavy else 0.22, 0.73 if heavy else 0.54)
+            joint(foot, ankle, 0.19, 0.51)
+            strut(upper, hip, knee, 0.25 if heavy else 0.17, 'dark')
+            strut(lower, knee, ankle, 0.27 if heavy else 0.16, 'dark')
             breadth = 0.88 if heavy else 0.51
-            panel(root, (breadth, 0.84, 0.25), (hip[0] + side * 0.04, 2.35, 0.3), 'paint', (-0.27 if reverse else -0.08, 0, 0))
-            panel(root, (breadth * 0.72, 0.25, 0.1), (hip[0] + side * 0.04, 2.58, 0.48), 'ivory')
-            plate(root, [(-breadth / 2, 0.18), (breadth / 2, 0.18), (breadth * 0.6, -0.09), (0, -0.32), (-breadth * 0.6, -0.09)], 0.26, (knee[0], knee[1], knee[2] + 0.28), 'ivory')
-            panel(root, (0.28, 0.046, 0.04), (knee[0], knee[1] + 0.03, knee[2] + 0.43), 'cyan')
+            panel(upper, (breadth, 0.84, 0.25), (hip[0] + side * 0.04, 2.35, 0.3), 'paint', (-0.27 if reverse else -0.08, 0, 0))
+            panel(upper, (breadth * 0.72, 0.25, 0.1), (hip[0] + side * 0.04, 2.58, 0.48), 'ivory')
+            plate(lower, [(-breadth / 2, 0.18), (breadth / 2, 0.18), (breadth * 0.6, -0.09), (0, -0.32), (-breadth * 0.6, -0.09)], 0.26, (knee[0], knee[1], knee[2] + 0.28), 'ivory')
+            panel(lower, (0.28, 0.046, 0.04), (knee[0], knee[1] + 0.03, knee[2] + 0.43), 'cyan')
             shin = Vector(knee).lerp(Vector(ankle), 0.54)
-            panel(root, (breadth + 0.09, 0.91, 0.26), (shin.x, shin.y, shin.z + 0.25), 'ivory', (-0.4 if reverse else -0.05, 0, 0))
-            panel(root, (breadth * 0.32, 0.59, 0.065), (shin.x, shin.y + 0.02, shin.z + 0.43), 'paint')
+            panel(lower, (breadth + 0.09, 0.91, 0.26), (shin.x, shin.y, shin.z + 0.25), 'ivory', (-0.4 if reverse else -0.05, 0, 0))
+            panel(lower, (breadth * 0.32, 0.59, 0.065), (shin.x, shin.y + 0.02, shin.z + 0.43), 'paint')
             for offset in (-1, 1):
-                piston(root, (knee[0] + offset * breadth * 0.58, knee[1] - 0.13, knee[2] - 0.1), (ankle[0] + offset * breadth * 0.54, 0.52, ankle[2] - 0.15), 0.048 if heavy else 0.035)
+                piston(lower, (knee[0] + offset * breadth * 0.58, knee[1] - 0.13, knee[2] - 0.1), (ankle[0] + offset * breadth * 0.54, 0.52, ankle[2] - 0.15), 0.048 if heavy else 0.035)
             foot_width = 1.12 if heavy else 0.72
-            panel(root, (foot_width, 0.25, 1.12), (ankle[0], 0.2, 0.27), 'dark')
+            panel(foot, (foot_width, 0.25, 1.12), (ankle[0], 0.2, 0.27), 'dark')
             for toe in (-1, 1):
-                panel(root, (foot_width * 0.4, 0.22, 0.66), (ankle[0] + toe * foot_width * 0.24, 0.34, 0.63), 'paint')
+                panel(foot, (foot_width * 0.4, 0.22, 0.66), (ankle[0] + toe * foot_width * 0.24, 0.34, 0.63), 'paint')
                 if reverse:
-                    plate(root, [(-0.12, 0.09), (0.12, 0.09), (0, -0.23)], 0.51, (ankle[0] + toe * 0.2, 0.2, 1.02), 'steel', (-0.18, 0, 0))
+                    plate(foot, [(-0.12, 0.09), (0.12, 0.09), (0, -0.23)], 0.51, (ankle[0] + toe * 0.2, 0.2, 1.02), 'steel', (-0.18, 0, 0))
             if heavy:
                 for index in range(5):
-                    panel(root, (1.13, 0.08, 0.1), (ankle[0], 0.07, -0.15 + index * 0.22), 'rubber', cut=0, bevel=0.004)
-                vent(root, (shin.x, shin.y - 0.15, shin.z + 0.44), 0.36, 0.21)
+                    panel(foot, (1.13, 0.08, 0.1), (ankle[0], 0.07, -0.15 + index * 0.22), 'rubber', cut=0, bevel=0.004)
+                vent(lower, (shin.x, shin.y - 0.15, shin.z + 0.44), 0.36, 0.21)
             else:
-                nozzle(root, (shin.x, shin.y + 0.08, shin.z - 0.3), 0.13, (0, 0, -1))
+                nozzle(lower, (shin.x, shin.y + 0.08, shin.z - 0.3), 0.13, (0, 0, -1))
     finish_part(root)
     return root
 
@@ -627,19 +708,19 @@ def select_roots(roots):
     for root in roots:
         root.hide_set(False)
         root.select_set(True)
-        for child in root.children_recursive:
+        for child in descendants(root):
             child.hide_set(False)
             child.select_set(True)
     bpy.context.view_layer.objects.active = roots[0]
 
 
-def export_library(roots):
+def export_library(roots, filename='IRONCLAD-PARTS.glb'):
     for shape in list(bpy.data.meshes):
         if shape.users == 0:
             bpy.data.meshes.remove(shape)
     add_uvs()
     select_roots(roots)
-    output = OUTPUT / 'IRONCLAD-PARTS.glb'
+    output = OUTPUT / filename
     bpy.ops.export_scene.gltf(filepath=str(output), export_format='GLB', use_selection=True, export_extras=True, export_normals=True, export_materials='EXPORT', export_animations=False, export_yup=True)
     print('EXPORTED', output, output.stat().st_size)
 
@@ -663,7 +744,7 @@ def main():
     defaults = ['bulwark', 'visor', 'gauntlet', 'strider', 'railgun', 'compact']
     for root in roots:
         visible = root['option'] in defaults
-        for child in [root, *root.children_recursive]:
+        for child in [root, *descendants(root)]:
             child.hide_set(not visible)
             child.hide_render = not visible
     for name in ('Cube', 'Light', 'Camera'):
@@ -675,4 +756,5 @@ def main():
     print('LIBRARY_ROOTS', len(roots))
 
 
-main()
+if __name__ == '__main__':
+    main()
